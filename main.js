@@ -303,3 +303,10 @@ engine.runRenderLoop(() => {
 });
 
 addEventListener("resize", () => engine.resize());
+  }).catch((error) => {
+  console.error("Game startup error:", error);
+  document.body.innerHTML =
+    "<div style='color:white;background:#111;padding:24px;font-size:18px'>تعذر تشغيل اللعبة: " +
+    String(error) +
+    "</div>";
+});
