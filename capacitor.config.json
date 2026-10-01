@@ -1,1 +1,9 @@
 
+{
+  "appId": "com.turrini.qummatal suoud",
+  "appName": "Qimmat Al Suoud",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
