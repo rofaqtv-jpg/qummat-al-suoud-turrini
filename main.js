@@ -26,7 +26,7 @@ const scene = new Scene(engine);
 
 scene.clearColor = new Color4(0.48, 0.69, 0.82, 1);
 
-const havok = await HavokPhysics();
+HavokPhysics().then((havok) => {
 
 scene.enablePhysics(
   new Vector3(0, -9.81, 0),
