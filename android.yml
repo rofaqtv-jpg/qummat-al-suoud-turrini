@@ -8,58 +8,44 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 🔧 Setup Node.js
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: ☕ Setup Java 21
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '21'
 
-      - name: 📦 Install Dependencies
+      - name: Install Dependencies
         run: npm install --legacy-peer-deps
 
-      - name: 🏗️ Build Web Assets
+      - name: Build Web
         run: npm run build
 
-      - name: 📱 Install Capacitor CLI
-        run: npm install @capacitor/cli --save-dev --legacy-peer-deps
-
-      - name: 🤖 Add Android Platform
+      - name: Add Android
         run: |
           if [ ! -d "android" ]; then
             npx cap add android
-          else
-            echo "Android platform already exists"
           fi
 
-      - name: 🔄 Sync Web to Android
+      - name: Sync
         run: npx cap sync android
 
-      - name: 🔨 Build Debug APK
+      - name: Build APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          ./gradlew assembleDebug --no-daemon
 
-      - name: 📤 Upload APK
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Qimmat-Al-Suoud-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-      - name: 📋 Show Build Info
-        if: always()
-        run: |
-          echo "=== Build Summary ==="
-          ls -la dist/ || echo "dist not found"
-          ls -la android/app/build/outputs/apk/debug/ || echo "APK not found"
