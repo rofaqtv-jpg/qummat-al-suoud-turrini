@@ -2,7 +2,10 @@
 <html lang="ar" dir="rtl">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="screen-orientation" content="landscape">
     <title>قمة الصعود | QIMMAT AL-SUOUD</title>
     <link rel="stylesheet" href="style.css">
 </head>
@@ -11,73 +14,99 @@
     <div id="splash-screen">
         <div class="logo-container">
             <h1 class="studio-name">TURRINISTUDIO</h1>
-            <h2 class="game-title">قمة الصعود<br><span class="en-title">QIMMAT AL-SUOUD</span></h2>
+            <h2 class="game-title">قمة الصعود</h2>
+            <p class="en-title">QIMMAT AL-SUOUD</p>
             <div class="loader"></div>
-            <p class="loading-text">جاري تهيئة محرك الفيزياء Havok...</p>
+            <p class="loading-text">جاري التحميل...</p>
         </div>
     </div>
 
     <!-- القائمة الرئيسية -->
     <div id="main-menu" class="ui-panel hidden">
-        <h1>قمة الصعود</h1>
-        <button onclick="startGame('free')">قيادة حرة (Free Drive)</button>
-        <button onclick="startGame('climb')">تسلق الجبل (Mountain Climb)</button>
-        <button onclick="showGarage()">الكراج والترقية (Garage)</button>
-        <button onclick="showImport()">استيراد مود (Import GLB)</button>
-        <button onclick="showMultiplayer()">لعب جماعي محلي (Multiplayer)</button>
-        <button onclick="toggleSettings()">الإعدادات</button>
+        <div class="menu-content">
+            <h1 class="menu-title">قمة الصعود</h1>
+            <div class="menu-buttons">
+                <button class="menu-btn primary" onclick="startGame()">🏔️ قيادة حرة</button>
+                <button class="menu-btn" onclick="showGarage()">🔧 الكراج</button>
+                <button class="menu-btn" onclick="showImport()">📦 استيراد مود</button>
+                <button class="menu-btn" onclick="showMultiplayer()">👥 لعب جماعي</button>
+                <button class="menu-btn" onclick="toggleSettings()">⚙️ الإعدادات</button>
+            </div>
+        </div>
     </div>
 
-    <!-- واجهة اللعب (HUD) -->
+    <!-- واجهة اللعب -->
     <div id="game-hud" class="hidden">
-        <div class="top-bar">
-            <span id="speedometer">0 km/h</span>
-            <span id="gear-indicator">D</span>
-            <button class="hud-btn" onclick="resetCar()">إعادة السيارة ↺</button>
-            <button class="hud-btn" onclick="toggleCamera()">كاميرا 🎥</button>
-            <button class="hud-btn" onclick="showMainMenu()">خروج 🏠</button>
+        <!-- الشريط العلوي -->
+        <div class="hud-top">
+            <div class="hud-info">
+                <span id="speedometer" class="speed-display">0</span>
+                <span class="speed-unit">km/h</span>
+            </div>
+            <div class="hud-buttons">
+                <button class="icon-btn" id="btn-reset" title="إعادة السيارة">↺</button>
+                <button class="icon-btn" id="btn-camera" title="تبديل الكاميرا">📷</button>
+                <button class="icon-btn" id="btn-exit" title="خروج">✕</button>
+            </div>
         </div>
-        
-        <!-- أزرار التحكم باللمس -->
+
+        <!-- أزرار التحكم - الوضع الأفقي -->
         <div class="touch-controls">
-            <div class="left-controls">
-                <button id="btn-left" class="touch-btn">◀</button>
-                <button id="btn-right" class="touch-btn">▶</button>
+            <!-- الجانب الأيسر: التوجيه -->
+            <div class="controls-left">
+                <button class="ctrl-btn steer-btn" id="btn-left">
+                    <span class="btn-icon">◀</span>
+                </button>
+                <button class="ctrl-btn steer-btn" id="btn-right">
+                    <span class="btn-icon">▶</span>
+                </button>
             </div>
-            <div class="right-controls">
-                <button id="btn-brake" class="touch-btn brake">فرامل</button>
-                <button id="btn-gas" class="touch-btn gas">وقود</button>
+
+            <!-- الجانب الأيمن: الوقود والفرامل -->
+            <div class="controls-right">
+                <button class="ctrl-btn brake-btn" id="btn-brake">
+                    <span class="btn-icon">🛑</span>
+                    <span class="btn-label">فرامل</span>
+                </button>
+                <button class="ctrl-btn gas-btn" id="btn-gas">
+                    <span class="btn-icon">⛽</span>
+                    <span class="btn-label">وقود</span>
+                </button>
             </div>
         </div>
+
+        <!-- فرامل اليد -->
+        <button class="handbrake-btn" id="btn-handbrake">🅿️</button>
     </div>
 
-    <!-- لوحة استيراد المودات -->
+    <!-- لوحة الاستيراد -->
     <div id="import-panel" class="ui-panel hidden">
-        <h2>استيراد مركبة أو خريطة (GLB/GLTF)</h2>
-        <input type="file" id="mod-file-input" accept=".glb,.gltf" />
-        <p id="import-status">اختر ملفاً من جهازك</p>
-        <button onclick="closeImport()">إغلاق</button>
+        <div class="panel-content">
+            <h2>📦 استيراد مود</h2>
+            <input type="file" id="mod-file-input" accept=".glb,.gltf">
+            <p id="import-status">اختر ملف GLB أو GLTF</p>
+            <button class="menu-btn" onclick="closeImport()">إغلاق</button>
+        </div>
     </div>
 
     <!-- لوحة الكراج -->
     <div id="garage-panel" class="ui-panel hidden">
-        <h2>كراج التطوير</h2>
-        <div class="upgrade-row">
-            <span>قوة المحرك</span>
-            <button onclick="upgrade('engine')">ترقية (+10%)</button>
+        <div class="panel-content">
+            <h2>🔧 الكراج</h2>
+            <div class="garage-row">
+                <span>لون السيارة</span>
+                <input type="color" id="car-color" value="#e74c3c" onchange="changeCarColor(this.value)">
+            </div>
+            <div class="garage-row">
+                <span>قوة المحرك</span>
+                <button class="menu-btn small" onclick="upgrade('engine')">ترقية</button>
+            </div>
+            <button class="menu-btn" onclick="closeGarage()">حفظ</button>
         </div>
-        <div class="upgrade-row">
-            <span>صلابة التعليق</span>
-            <button onclick="upgrade('suspension')">تعديل</button>
-        </div>
-        <div class="upgrade-row">
-            <span>لون الهيكل</span>
-            <input type="color" id="car-color" value="#ff0000" onchange="changeCarColor(this.value)">
-        </div>
-        <button onclick="closeGarage()">حفظ والعودة</button>
     </div>
 
     <canvas id="renderCanvas"></canvas>
+
     <script type="module" src="/main.js"></script>
 </body>
-          </html>
+</html>
