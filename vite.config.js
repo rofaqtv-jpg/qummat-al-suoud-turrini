@@ -1,8 +1,20 @@
-import { defineConfig } from "vite";
+import { defineConfig } from 'vite';
 
 export default defineConfig({
-  base: "./",
+  base: './',
   build: {
-    target: "chrome66"
+    outDir: 'dist',
+    assetsDir: 'assets',
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          babylon: ['@babylonjs/core', '@babylonjs/loaders', '@babylonjs/gui'],
+          havok: ['@babylonjs/havok']
+        }
+      }
+    }
+  },
+  optimizeDeps: {
+    exclude: ['@babylonjs/havok']
   }
 });
