@@ -1,23 +1,14 @@
 {
-  "name": "qimmat-al-suoud",
-  "version": "1.0.0",
-  "description": "Qimmat Al Suoud 3D Driving Game by TURRINISTUDIO",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
   "dependencies": {
     "@babylonjs/core": "^7.15.0",
     "@babylonjs/havok": "^1.3.0",
     "@babylonjs/loaders": "^7.15.0",
-    "@babylonjs/gui": "^7.15.0",
     "@capacitor/core": "^7.0.0",
     "@capacitor/cli": "^7.0.0",
     "@capacitor/android": "^7.0.0"
   },
   "devDependencies": {
-    "vite": "^5.4.0"
+    "vite": "^5.4.0",
+    "vite-plugin-static-copy": "^1.0.0"
   }
 }
