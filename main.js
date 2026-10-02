@@ -1,10 +1,23 @@
 import { Engine, Scene, Vector3, Color3, HemisphericLight, DirectionalLight, 
          ShadowGenerator, ArcRotateCamera, MeshBuilder, StandardMaterial,
          PhysicsAggregate, PhysicsShapeType, Quaternion } from '@babylonjs/core';
-import HavokPhysics from '@babylonjs/havok';
-import { HavokPlugin } from '@babylonjs/core/Physics';
 import '@babylonjs/loaders/glTF';
 import { SceneLoader } from '@babylonjs/core/Loading/sceneLoader';
+
+// ✅ Havok يُحمّل من CDN فقط (لا import محلي)
+let HavokPlugin = null;
+
+async function loadHavokPlugin() {
+    try {
+        const coreModule = await import(/* @vite-ignore */ 
+            'https://cdn.jsdelivr.net/npm/@babylonjs/core@7.15.0/Physics/index.js');
+        HavokPlugin = coreModule.HavokPlugin;
+        return true;
+    } catch(e) {
+        console.error('فشل تحميل HavokPlugin:', e);
+        return false;
+    }
+}
 
 // ================== نظام مركبة Raycast الاحترافي ==================
 class RaycastVehicle {
