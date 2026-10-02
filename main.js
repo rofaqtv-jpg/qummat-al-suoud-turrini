@@ -1,6 +1,6 @@
 // ============================================================
 // قمة الصعود | QIMMAT AL-SUOUD - TURRINISTUDIO
-// نسخة نظيفة ومستقرة
+// نسخة مُحصّنة مع تشخيص كامل
 // ============================================================
 
 import {
@@ -14,15 +14,10 @@ import {
     ArcRotateCamera,
     MeshBuilder,
     StandardMaterial,
-    PhysicsAggregate,
-    PhysicsShapeType,
     Quaternion
 } from '@babylonjs/core';
 
-import HavokPhysics from '@babylonjs/havok';
-import { HavokPlugin } from '@babylonjs/core/Physics';
 import '@babylonjs/loaders/glTF';
-import havokWasmUrl from '@babylonjs/havok/lib/esm/HavokPhysics.wasm?url';
 
 // ============================================================
 // المتغيرات العامة
@@ -31,7 +26,7 @@ let engine = null;
 let scene = null;
 let camera = null;
 let vehicle = null;
-let havokPlugin = null;
+let physicsEnabled = false;
 
 let inputState = {
     gas: false,
@@ -45,32 +40,38 @@ let cameraMode = 0;
 let gameActive = false;
 
 // ============================================================
-// فئة مركبة Raycast
+// فئة مركبة مبسطة (تعمل بدون فيزياء خارجية)
 // ============================================================
-class RaycastVehicle {
+class SimpleVehicle {
     constructor(scene, chassisMesh) {
         this.scene = scene;
         this.chassis = chassisMesh;
 
-        this.aggregate = new PhysicsAggregate(
-            chassisMesh,
-            PhysicsShapeType.BOX,
-            { mass: 1200, friction: 0.5, restitution: 0.2 },
-            scene
-        );
+        // الحالة الأساسية
+        this.position = chassisMesh.position.clone();
+        this.rotation = new Vector3(0, 0, 0);
+        this.velocity = new Vector3(0, 0, 0);
+        this.angularVelocity = 0;
 
-        this.wheelInfos = [
-            { offset: new Vector3(-1.1, -0.5, 1.5), isFront: true, engine: false },
-            { offset: new Vector3(1.1, -0.5, 1.5), isFront: true, engine: false },
-            { offset: new Vector3(-1.1, -0.5, -1.5), isFront: false, engine: true },
-            { offset: new Vector3(1.1, -0.5, -1.5), isFront: false, engine: true }
-        ];
+        // خصائص السيارة
+        this.mass = 1200;
+        this.enginePower = 3000;
+        this.brakePower = 200;
+        this.maxSpeed = 50; // m/s
+        this.steerSpeed = 0.03;
+        this.friction = 0.98;
+        this.gravity = -9.81;
 
+        // العجلات المرئية
         this.wheels = [];
+        this.wheelRadius = 0.4;
+        this.wheelBase = 3.0;
+        this.trackWidth = 2.2;
+
         for (let i = 0; i < 4; i++) {
             const wheel = MeshBuilder.CreateCylinder(
                 'wheel_' + i,
-                { diameter: 0.8, height: 0.35, tessellation: 20 },
+                { diameter: this.wheelRadius * 2, height: 0.35, tessellation: 20 },
                 scene
             );
             wheel.rotation.z = Math.PI / 2;
@@ -79,147 +80,149 @@ class RaycastVehicle {
             this.wheels.push(wheel);
         }
 
-        this.suspensionRestLength = 0.5;
-        this.suspensionStiffness = 35;
-        this.suspensionDamping = 3;
-        this.wheelRadius = 0.4;
-        this.maxSuspensionForce = 60000;
-
-        this.engineForce = 0;
-        this.brakeForce = 0;
-        this.steerValue = 0;
+        // حالة التحكم
+        this.throttle = 0;
+        this.brake = 0;
+        this.steer = 0;
         this.handbrake = false;
         this.speed = 0;
+        this.grounded = true;
+
+        console.log('🚗 تم إنشاء المركبة');
     }
 
-    update() {
-        if (!this.aggregate || !this.aggregate.body) return;
+    update(deltaTime) {
+        if (!this.chassis) return;
 
-        const body = this.aggregate.body;
-        const transform = body.getTransformNode();
-        const chassisPos = transform.getAbsolutePosition();
-        const forward = transform.forward;
-        const right = transform.right;
-        const up = transform.up;
+        // حساب الاتجاهات
+        const forward = new Vector3(
+            Math.sin(this.rotation.y),
+            0,
+            Math.cos(this.rotation.y)
+        );
+        const right = new Vector3(
+            Math.cos(this.rotation.y),
+            0,
+            -Math.sin(this.rotation.y)
+        );
 
-        let totalForce = Vector3.Zero();
-
-        const vel = body.getLinearVelocity();
-        this.speed = Math.sqrt(vel.x * vel.x + vel.z * vel.z) * 3.6;
-
-        for (let i = 0; i < 4; i++) {
-            const info = this.wheelInfos[i];
-
-            const connectionWorld = chassisPos
-                .add(right.scale(info.offset.x))
-                .add(up.scale(info.offset.y))
-                .add(forward.scale(info.offset.z));
-
-            const rayDir = up.scale(-1);
-            const rayLength = this.suspensionRestLength + this.wheelRadius + 0.5;
-            const rayEnd = connectionWorld.add(rayDir.scale(rayLength));
-
-            const physicsEngine = this.scene.getPhysicsEngine();
-            if (!physicsEngine) continue;
-
-            const hit = physicsEngine.raycast(connectionWorld, rayEnd);
-
-            if (hit && hit.hasHit) {
-                const hitPoint = hit.hitPointWorld;
-                const hitDistance = hitPoint.subtract(connectionWorld).length();
-                const suspensionLength = hitDistance - this.wheelRadius;
-                let compression = this.suspensionRestLength - suspensionLength;
-
-                if (compression > 0) {
-                    let suspensionForce = compression * this.suspensionStiffness * 1000;
-
-                    const pointVelocity = body.getLinearVelocityAtPoint(connectionWorld);
-                    const dampingForce = pointVelocity.dot(up) * this.suspensionDamping * 1000;
-                    suspensionForce -= dampingForce;
-
-                    suspensionForce = Math.max(0, Math.min(suspensionForce, this.maxSuspensionForce));
-                    totalForce.addInPlace(up.scale(suspensionForce));
-
-                    let wheelForward = forward.clone();
-                    if (info.isFront && Math.abs(this.steerValue) > 0.01) {
-                        const steerQuat = Quaternion.RotationAxis(up, this.steerValue);
-                        const rotMatrix = steerQuat.toRotationMatrix();
-                        wheelForward = Vector3.TransformCoordinates(wheelForward, rotMatrix);
-                    }
-
-                    if (info.engine && Math.abs(this.engineForce) > 0) {
-                        const engineVec = wheelForward.scale(this.engineForce / 2);
-                        totalForce.addInPlace(engineVec);
-                    }
-
-                    if (this.brakeForce > 0) {
-                        const pointVel = body.getLinearVelocityAtPoint(hitPoint);
-                        totalForce.addInPlace(pointVel.scale(-this.brakeForce));
-                    }
-
-                    if (this.handbrake && !info.isFront) {
-                        const pointVel = body.getLinearVelocityAtPoint(hitPoint);
-                        totalForce.addInPlace(pointVel.scale(-50));
-                    }
-
-                    const lateralVel = body.getLinearVelocityAtPoint(hitPoint).dot(right);
-                    totalForce.addInPlace(right.scale(-lateralVel * 8));
-
-                    this.wheels[i].position = hitPoint.add(up.scale(this.wheelRadius * 0.5));
-                    this.wheels[i].rotationQuaternion = transform.rotationQuaternion.clone();
-
-                    if (this.speed > 1) {
-                        const rollQuat = Quaternion.RotationAxis(right, this.speed * 0.03);
-                        this.wheels[i].rotationQuaternion.multiplyInPlace(rollQuat);
-                    }
-
-                    if (info.isFront) {
-                        const steerVisual = Quaternion.RotationAxis(up, this.steerValue * 0.8);
-                        this.wheels[i].rotationQuaternion.multiplyInPlace(steerVisual);
-                    }
-                }
-            } else {
-                this.wheels[i].position = connectionWorld.add(rayDir.scale(this.suspensionRestLength));
-                this.wheels[i].rotationQuaternion = transform.rotationQuaternion.clone();
-            }
+        // 1. قوة المحرك
+        let engineForce = 0;
+        if (this.throttle > 0) {
+            engineForce = this.throttle * this.enginePower;
+        }
+        if (this.brake > 0) {
+            engineForce = -this.brake * this.brakePower * 2;
         }
 
-        body.applyForce(totalForce, chassisPos);
+        // تطبيق القوة
+        const acceleration = forward.scale(engineForce / this.mass);
+        this.velocity.addInPlace(acceleration.scale(deltaTime));
 
-        const dragForce = vel.scale(-0.3);
-        body.applyForce(dragForce, chassisPos);
+        // 2. التوجيه
+        if (Math.abs(this.steer) > 0.01 && Math.abs(this.speed) > 0.5) {
+            const steerAmount = this.steer * this.steerSpeed * Math.min(Math.abs(this.speed) / 10, 1);
+            this.rotation.y += steerAmount;
+        }
 
-        const euler = transform.rotationQuaternion ? transform.rotationQuaternion.toEulerAngles() : new Vector3(0, 0, 0);
-        if (Math.abs(euler.x) > 1.4 || Math.abs(euler.z) > 1.4) {
-            body.setAngularVelocity(Vector3.Zero());
+        // 3. الاحتكاك والمقاومة
+        this.velocity.scaleInPlace(this.friction);
+
+        // 4. الجاذبية
+        this.velocity.y += this.gravity * deltaTime;
+
+        // 5. تحديث الموقع
+        this.position.addInPlace(this.velocity.scale(deltaTime));
+
+        // 6. منع السقوط تحت الأرض
+        if (this.position.y < 1) {
+            this.position.y = 1;
+            this.velocity.y = 0;
+            this.grounded = true;
+        } else {
+            this.grounded = false;
+        }
+
+        // 7. حساب السرعة
+        this.speed = Math.sqrt(
+            this.velocity.x * this.velocity.x +
+            this.velocity.z * this.velocity.z
+        );
+
+        // 8. تحديث موقع الهيكل
+        this.chassis.position.copyFrom(this.position);
+        this.chassis.rotation.copyFrom(this.rotation);
+
+        // 9. تحديث العجلات
+        this.updateWheels(forward, right);
+
+        // 10. تشخيص
+        if (Math.random() < 0.01) {
+            console.log('🚗 السرعة:', this.speed.toFixed(1),
+                       '| الموقع:', this.position.y.toFixed(1),
+                       '| الوقود:', this.throttle);
+        }
+    }
+
+    updateWheels(forward, right) {
+        const wheelPositions = [
+            new Vector3(-this.trackWidth / 2, -0.5, this.wheelBase / 2),  // أمام يسار
+            new Vector3(this.trackWidth / 2, -0.5, this.wheelBase / 2),   // أمام يمين
+            new Vector3(-this.trackWidth / 2, -0.5, -this.wheelBase / 2), // خلف يسار
+            new Vector3(this.trackWidth / 2, -0.5, -this.wheelBase / 2)   // خلف يمين
+        ];
+
+        for (let i = 0; i < 4; i++) {
+            const offset = wheelPositions[i];
+
+            // تطبيق الدوران على الإزاحة
+            const rotatedOffset = new Vector3(
+                offset.x * Math.cos(this.rotation.y) + offset.z * Math.sin(this.rotation.y),
+                offset.y,
+                -offset.x * Math.sin(this.rotation.y) + offset.z * Math.cos(this.rotation.y)
+            );
+
+            this.wheels[i].position.copyFrom(this.position.add(rotatedOffset));
+            this.wheels[i].rotation.y = this.rotation.y;
+
+            // توجيه العجلات الأمامية
+            if (i < 2) {
+                this.wheels[i].rotation.y += this.steer * 0.5;
+            }
+
+            // تدوير العجلات حسب السرعة
+            this.wheels[i].rotation.x += this.speed * 0.1;
         }
     }
 
     setThrottle(value) {
-        this.engineForce = value * 3000;
+        this.throttle = Math.max(0, Math.min(1, value));
     }
 
     setBrake(value) {
-        this.brakeForce = value * 200;
+        this.brake = Math.max(0, Math.min(1, value));
     }
 
     setSteer(value) {
-        this.steerValue = value * 0.45;
+        this.steer = Math.max(-1, Math.min(1, value));
     }
 
     setHandbrake(active) {
         this.handbrake = active;
+        if (active) {
+            this.velocity.scaleInPlace(0.95);
+        }
     }
 
     reset() {
-        if (!this.aggregate || !this.aggregate.body) return;
-        const body = this.aggregate.body;
-        const transform = body.getTransformNode();
-        transform.position = new Vector3(0, 5, 0);
-        transform.rotation = new Vector3(0, 0, 0);
-        transform.rotationQuaternion = Quaternion.Identity();
-        body.setLinearVelocity(Vector3.Zero());
-        body.setAngularVelocity(Vector3.Zero());
+        this.position = new Vector3(0, 2, 0);
+        this.rotation = new Vector3(0, 0, 0);
+        this.velocity = new Vector3(0, 0, 0);
+        this.speed = 0;
+        this.throttle = 0;
+        this.brake = 0;
+        this.steer = 0;
+        console.log('↺ إعادة تعيين السيارة');
     }
 }
 
@@ -232,32 +235,39 @@ async function initGame() {
         const canvas = document.getElementById('renderCanvas');
         engine = new Engine(canvas, true, {
             preserveDrawingBuffer: true,
-            stencil: true,
-            powerPreference: 'high-performance'
+            stencil: true
         });
         scene = new Scene(engine);
         scene.clearColor = new Color3(0.5, 0.7, 0.9);
 
-        updateLoadingStatus('تحميل محرك فيزياء Havok...');
-        await initHavok();
-
-        updateLoadingStatus('بناء العالم الجبلي...');
-        const shadowGen = createLighting();
-        createWorld(shadowGen);
+        updateLoadingStatus('بناء العالم...');
+        createWorld();
 
         updateLoadingStatus('تصنيع السيارة...');
-        createVehicle(shadowGen);
+        createVehicle();
 
         updateLoadingStatus('تهيئة الكاميرا...');
         setupCamera(canvas);
 
+        // حلقة اللعبة
+        let lastTime = performance.now();
+
         scene.onBeforeRenderObservable.add(function () {
+            const currentTime = performance.now();
+            const deltaTime = Math.min((currentTime - lastTime) / 1000, 0.1);
+            lastTime = currentTime;
+
             if (vehicle && gameActive) {
+                // تطبيق المدخلات
                 vehicle.setThrottle(inputState.gas ? 1 : 0);
                 vehicle.setBrake(inputState.brake ? 1 : 0);
                 vehicle.setSteer((inputState.left ? 1 : 0) - (inputState.right ? 1 : 0));
                 vehicle.setHandbrake(inputState.handbrake);
-                vehicle.update();
+
+                // تحديث الفيزياء
+                vehicle.update(deltaTime);
+
+                // تحديث الكاميرا والـ HUD
                 updateCamera();
                 updateHUD();
             }
@@ -275,6 +285,7 @@ async function initGame() {
         });
 
         console.log('✅ تم تحميل اللعبة بنجاح!');
+        console.log('🎮 الفيزياء: مبسطة (بدون Havok)');
 
     } catch (error) {
         console.error('❌ خطأ فادح:', error);
@@ -283,135 +294,86 @@ async function initGame() {
 }
 
 // ============================================================
-// تهيئة Havok
+// بناء العالم
 // ============================================================
-async function initHavok() {
-    try {
-        const havokInstance = await HavokPhysics({
-            locateFile: function () {
-                return havokWasmUrl;
-            }
-        });
-
-        havokPlugin = new HavokPlugin(true, havokInstance);
-        scene.enablePhysics(new Vector3(0, -9.81, 0), havokPlugin);
-        console.log('✅ Havok Physics جاهز');
-    } catch (error) {
-        console.error('❌ فشل تحميل Havok:', error);
-        throw new Error('تعذر تحميل محرك فيزياء Havok: ' + error.message);
-    }
-}
-
-// ============================================================
-// الإضاءة
-// ============================================================
-function createLighting() {
+function createWorld() {
+    // إضاءة
     const hemiLight = new HemisphericLight('hemi', new Vector3(0, 1, 0), scene);
-    hemiLight.intensity = 0.6;
-    hemiLight.diffuse = new Color3(1, 0.98, 0.9);
+    hemiLight.intensity = 0.7;
 
     const dirLight = new DirectionalLight('dir', new Vector3(-1, -2, -1), scene);
     dirLight.position = new Vector3(30, 50, 30);
-    dirLight.intensity = 1.2;
+    dirLight.intensity = 1.0;
 
     const shadowGen = new ShadowGenerator(1024, dirLight);
-    shadowGen.useBlurExponentialShadowMap = true;
-    shadowGen.blurKernel = 16;
 
-    return shadowGen;
-}
-
-// ============================================================
-// بناء العالم
-// ============================================================
-function createWorld(shadowGen) {
     // أرضية
     const ground = MeshBuilder.CreateGround('ground', {
         width: 200,
         height: 200,
-        subdivisions: 60
+        subdivisions: 40
     }, scene);
 
+    // إضافة تضاريس بسيطة
     const positions = ground.getVerticesData('position');
     if (positions) {
         for (let i = 0; i < positions.length; i += 3) {
             const x = positions[i];
             const z = positions[i + 2];
-            positions[i + 1] = Math.sin(x * 0.08) * 3 + Math.cos(z * 0.08) * 3;
+            positions[i + 1] = Math.sin(x * 0.05) * 2 + Math.cos(z * 0.05) * 2;
         }
         ground.updateVerticesData('position', positions);
     }
 
     ground.material = new StandardMaterial('groundMat', scene);
     ground.material.diffuseColor = new Color3(0.5, 0.4, 0.3);
-    ground.material.specularColor = new Color3(0.1, 0.1, 0.1);
     ground.receiveShadows = true;
 
-    new PhysicsAggregate(ground, PhysicsShapeType.MESH, {
-        mass: 0,
-        friction: 0.8
-    }, scene);
-
     // طريق
-    const road = MeshBuilder.CreatePlane('road', { width: 8, height: 180 }, scene);
+    const road = MeshBuilder.CreatePlane('road', { width: 10, height: 180 }, scene);
     road.rotation.x = Math.PI / 2;
-    road.position.y = 0.3;
+    road.position.y = 0.1;
     road.material = new StandardMaterial('roadMat', scene);
     road.material.diffuseColor = new Color3(0.2, 0.2, 0.2);
 
     // صخور
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < 15; i++) {
         const rock = MeshBuilder.CreateSphere('rock_' + i, {
-            diameter: 2 + Math.random() * 4,
+            diameter: 2 + Math.random() * 3,
             segments: 6
         }, scene);
         rock.position = new Vector3(
-            (Math.random() - 0.5) * 160,
-            12,
-            (Math.random() - 0.5) * 160
+            (Math.random() - 0.5) * 150,
+            5,
+            (Math.random() - 0.5) * 150
         );
         rock.material = new StandardMaterial('rockMat_' + i, scene);
         rock.material.diffuseColor = new Color3(0.35, 0.33, 0.32);
         shadowGen.addShadowCaster(rock);
-        new PhysicsAggregate(rock, PhysicsShapeType.SPHERE, {
-            mass: 15,
-            friction: 0.7
-        }, scene);
     }
 
     // أشجار
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 10; i++) {
         const trunk = MeshBuilder.CreateCylinder('trunk_' + i, {
             diameter: 0.5,
             height: 3,
             tessellation: 6
         }, scene);
         trunk.position = new Vector3(
-            (Math.random() - 0.5) * 180,
+            (Math.random() - 0.5) * 160,
             1.5,
-            (Math.random() - 0.5) * 180
+            (Math.random() - 0.5) * 160
         );
         trunk.material = new StandardMaterial('trunkMat_' + i, scene);
         trunk.material.diffuseColor = new Color3(0.4, 0.25, 0.1);
         shadowGen.addShadowCaster(trunk);
-        new PhysicsAggregate(trunk, PhysicsShapeType.CYLINDER, { mass: 0 }, scene);
-
-        const leaves = MeshBuilder.CreateSphere('leaves_' + i, {
-            diameter: 2.5,
-            segments: 6
-        }, scene);
-        leaves.position.y = 2.5;
-        leaves.parent = trunk;
-        leaves.material = new StandardMaterial('leavesMat_' + i, scene);
-        leaves.material.diffuseColor = new Color3(0.1, 0.4, 0.1);
-        shadowGen.addShadowCaster(leaves);
     }
 }
 
 // ============================================================
 // إنشاء السيارة
 // ============================================================
-function createVehicle(shadowGen) {
+function createVehicle() {
     const chassis = MeshBuilder.CreateBox('chassis', {
         width: 2,
         height: 0.9,
@@ -420,7 +382,6 @@ function createVehicle(shadowGen) {
     chassis.position.y = 2;
     chassis.material = new StandardMaterial('chassisMat', scene);
     chassis.material.diffuseColor = new Color3(0.9, 0.1, 0.1);
-    shadowGen.addShadowCaster(chassis);
 
     const cabin = MeshBuilder.CreateBox('cabin', {
         width: 1.8,
@@ -431,9 +392,8 @@ function createVehicle(shadowGen) {
     cabin.parent = chassis;
     cabin.material = new StandardMaterial('cabinMat', scene);
     cabin.material.diffuseColor = new Color3(0.7, 0.05, 0.05);
-    shadowGen.addShadowCaster(cabin);
 
-    vehicle = new RaycastVehicle(scene, chassis);
+    vehicle = new SimpleVehicle(scene, chassis);
 }
 
 // ============================================================
@@ -444,13 +404,11 @@ function setupCamera(canvas) {
     camera.attachControl(canvas, true);
     camera.lowerRadiusLimit = 4;
     camera.upperRadiusLimit = 25;
-    camera.lowerBetaLimit = 0.3;
-    camera.upperBetaLimit = Math.PI / 1.8;
 }
 
 function updateCamera() {
     if (!vehicle || !camera) return;
-    const target = vehicle.chassis.position;
+    const target = vehicle.position;
 
     if (cameraMode === 0) {
         camera.setTarget(target);
@@ -458,8 +416,12 @@ function updateCamera() {
         camera.alpha += (Math.PI - camera.alpha) * 0.03;
         camera.beta += (Math.PI / 2.5 - camera.beta) * 0.05;
     } else if (cameraMode === 1) {
-        camera.position = target.add(new Vector3(0, 1.2, 0.5));
-        camera.setTarget(target.add(vehicle.chassis.forward.scale(20)));
+        camera.position = target.add(new Vector3(0, 1.5, 0.5));
+        camera.setTarget(target.add(new Vector3(
+            Math.sin(vehicle.rotation.y) * 20,
+            0,
+            Math.cos(vehicle.rotation.y) * 20
+        )));
     } else {
         camera.position = target.add(new Vector3(0, 18, 0.1));
         camera.setTarget(target);
@@ -472,9 +434,9 @@ function updateCamera() {
 function updateHUD() {
     if (!vehicle) return;
     const speedEl = document.getElementById('speedometer');
-    const gearEl = document.getElementById('gear-indicator');
-    if (speedEl) speedEl.innerText = Math.floor(vehicle.speed) + ' km/h';
-    if (gearEl) gearEl.innerText = 'D';
+    if (speedEl) {
+        speedEl.innerText = Math.floor(vehicle.speed * 3.6);
+    }
 }
 
 function updateLoadingStatus(msg) {
@@ -498,85 +460,17 @@ function showError(title, details) {
         splash.classList.remove('hidden');
         splash.innerHTML =
             '<div class="logo-container" style="text-align:center;padding:20px;">' +
-            '<h1 style="color:#e74c3c;font-size:2rem;">⚠️ ' + title + '</h1>' +
-            '<p style="color:#aaa;background:#111;padding:15px;border-radius:5px;direction:ltr;text-align:left;font-family:monospace;max-height:200px;overflow:auto;">' + details + '</p>' +
-            '<button onclick="location.reload()" style="margin-top:20px;min-width:200px;">إعادة المحاولة 🔄</button>' +
+            '<h1 style="color:#e74c3c;">⚠️ ' + title + '</h1>' +
+            '<p style="color:#aaa;background:#111;padding:15px;border-radius:5px;direction:ltr;">' + details + '</p>' +
+            '<button onclick="location.reload()" style="margin-top:20px;">إعادة المحاولة</button>' +
             '</div>';
     }
 }
 
 // ============================================================
-// أزرار الواجهة
+// ربط أزرار التحكم
 // ============================================================
-window.startGame = function () {
-    const menu = document.getElementById('main-menu');
-    const hud = document.getElementById('game-hud');
-    if (menu) menu.classList.add('hidden');
-    if (hud) hud.classList.remove('hidden');
-    gameActive = true;
-    if (vehicle) vehicle.reset();
-};
-
-window.showMainMenu = function () {
-    const menu = document.getElementById('main-menu');
-    const hud = document.getElementById('game-hud');
-    if (hud) hud.classList.add('hidden');
-    if (menu) menu.classList.remove('hidden');
-    gameActive = false;
-};
-
-window.resetCar = function () {
-    if (vehicle) vehicle.reset();
-};
-
-window.toggleCamera = function () {
-    cameraMode = (cameraMode + 1) % 3;
-};
-
-window.showImport = function () {
-    const el = document.getElementById('import-panel');
-    if (el) el.classList.remove('hidden');
-};
-
-window.closeImport = function () {
-    const el = document.getElementById('import-panel');
-    if (el) el.classList.add('hidden');
-};
-
-window.showGarage = function () {
-    const el = document.getElementById('garage-panel');
-    if (el) el.classList.remove('hidden');
-};
-
-window.closeGarage = function () {
-    const el = document.getElementById('garage-panel');
-    if (el) el.classList.add('hidden');
-};
-
-window.toggleSettings = function () {
-    alert('⚙️ الإعدادات قيد التطوير');
-};
-
-window.showMultiplayer = function () {
-    alert('🌐 اللعب الجماعي قيد التطوير');
-};
-
-window.changeCarColor = function (color) {
-    if (vehicle && vehicle.chassis && vehicle.chassis.material) {
-        vehicle.chassis.material.diffuseColor = Color3.FromHexString(color);
-    }
-};
-
-window.upgrade = function (type) {
-    alert('✅ تمت الترقية: ' + type);
-};
-
-/// ============================================================
-// ربط أزرار التحكم - نظام موثوق 100%
-// ============================================================
-
 function setupControls() {
-    // دالة ربط موحدة تعمل مع اللمس والماوس
     function bindControl(buttonId, inputKey) {
         const btn = document.getElementById(buttonId);
         if (!btn) {
@@ -584,13 +478,12 @@ function setupControls() {
             return;
         }
 
-        // إضافة فئة نشطة للتأثير البصري
         function activate(e) {
             if (e.cancelable) e.preventDefault();
             e.stopPropagation();
             inputState[inputKey] = true;
             btn.classList.add('active');
-            console.log('🎮 تفعيل:', inputKey);
+            console.log('🎮 تفعيل:', inputKey, '| gameActive:', gameActive);
         }
 
         function deactivate(e) {
@@ -600,23 +493,14 @@ function setupControls() {
             btn.classList.remove('active');
         }
 
-        // أحداث اللمس
         btn.addEventListener('touchstart', activate, { passive: false });
         btn.addEventListener('touchend', deactivate, { passive: false });
         btn.addEventListener('touchcancel', deactivate, { passive: false });
-
-        // أحداث الماوس
         btn.addEventListener('mousedown', activate);
         btn.addEventListener('mouseup', deactivate);
         btn.addEventListener('mouseleave', deactivate);
-
-        // أحداث المؤشر (للأجهزة اللوحية)
-        btn.addEventListener('pointerdown', activate);
-        btn.addEventListener('pointerup', deactivate);
-        btn.addEventListener('pointercancel', deactivate);
     }
 
-    // ربط جميع الأزرار
     bindControl('btn-gas', 'gas');
     bindControl('btn-brake', 'brake');
     bindControl('btn-left', 'left');
@@ -625,118 +509,55 @@ function setupControls() {
 
     // أزرار الواجهة
     const resetBtn = document.getElementById('btn-reset');
-    if (resetBtn) {
-        resetBtn.addEventListener('click', function () {
-            resetCar();
-        });
-    }
+    if (resetBtn) resetBtn.addEventListener('click', resetCar);
 
     const cameraBtn = document.getElementById('btn-camera');
-    if (cameraBtn) {
-        cameraBtn.addEventListener('click', function () {
-            toggleCamera();
-        });
-    }
+    if (cameraBtn) cameraBtn.addEventListener('click', toggleCamera);
 
     const exitBtn = document.getElementById('btn-exit');
-    if (exitBtn) {
-        exitBtn.addEventListener('click', function () {
-            showMainMenu();
-        });
-    }
+    if (exitBtn) exitBtn.addEventListener('click', showMainMenu);
 
-    console.log('✅ تم ربط جميع أزرار التحكم');
+    console.log('✅ تم ربط أزرار التحكم');
 }
 
 // لوحة المفاتيح
 function setupKeyboard() {
     window.addEventListener('keydown', function (e) {
-        switch (e.key) {
-            case 'w':
-            case 'W':
-            case 'ArrowUp':
-                inputState.gas = true;
-                break;
-            case 's':
-            case 'S':
-            case 'ArrowDown':
-                inputState.brake = true;
-                break;
-            case 'a':
-            case 'A':
-            case 'ArrowLeft':
-                inputState.left = true;
-                break;
-            case 'd':
-            case 'D':
-            case 'ArrowRight':
-                inputState.right = true;
-                break;
-            case ' ':
-                inputState.handbrake = true;
-                break;
-        }
+        if (e.key === 'w' || e.key === 'ArrowUp') inputState.gas = true;
+        if (e.key === 's' || e.key === 'ArrowDown') inputState.brake = true;
+        if (e.key === 'a' || e.key === 'ArrowLeft') inputState.left = true;
+        if (e.key === 'd' || e.key === 'ArrowRight') inputState.right = true;
+        if (e.key === ' ') inputState.handbrake = true;
     });
 
     window.addEventListener('keyup', function (e) {
-        switch (e.key) {
-            case 'w':
-            case 'W':
-            case 'ArrowUp':
-                inputState.gas = false;
-                break;
-            case 's':
-            case 'S':
-            case 'ArrowDown':
-                inputState.brake = false;
-                break;
-            case 'a':
-            case 'A':
-            case 'ArrowLeft':
-                inputState.left = false;
-                break;
-            case 'd':
-            case 'D':
-            case 'ArrowRight':
-                inputState.right = false;
-                break;
-            case ' ':
-                inputState.handbrake = false;
-                break;
-        }
+        if (e.key === 'w' || e.key === 'ArrowUp') inputState.gas = false;
+        if (e.key === 's' || e.key === 'ArrowDown') inputState.brake = false;
+        if (e.key === 'a' || e.key === 'ArrowLeft') inputState.left = false;
+        if (e.key === 'd' || e.key === 'ArrowRight') inputState.right = false;
+        if (e.key === ' ') inputState.handbrake = false;
     });
 
     console.log('✅ تم ربط لوحة المفاتيح');
 }
 
-// محاولة قفل الاتجاه الأفقي
-function lockLandscape() {
-    // محاولة قفل الاتجاه عبر Screen Orientation API
-    if (screen.orientation && screen.orientation.lock) {
-        screen.orientation.lock('landscape').catch(function (err) {
-            console.log('⚠️ تعذر قفل الاتجاه:', err.message);
-        });
-    }
-
-    // محاولة عبر meta tag (لأجهزة iOS)
-    const meta = document.querySelector('meta[name="viewport"]');
-    if (meta) {
-        meta.setAttribute('content',
-            'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
-        );
-    }
-}
-
+// ============================================================
 // دوال الواجهة
+// ============================================================
 window.startGame = function () {
+    console.log('🎮 بدء اللعبة!');
     const menu = document.getElementById('main-menu');
     const hud = document.getElementById('game-hud');
     if (menu) menu.classList.add('hidden');
     if (hud) hud.classList.remove('hidden');
+
     gameActive = true;
-    lockLandscape();
-    if (vehicle) vehicle.reset();
-    console.log('🎮 بدء اللعبة');
+    console.log('✅ gameActive = true');
+
+    if (vehicle) {
+        vehicle.reset();
+        console.log('✅ تم إعادة تعيين السيارة');
+    }
 };
 
 window.showMainMenu = function () {
@@ -748,10 +569,7 @@ window.showMainMenu = function () {
 };
 
 window.resetCar = function () {
-    if (vehicle) {
-        vehicle.reset();
-        console.log('↺ إعادة السيارة');
-    }
+    if (vehicle) vehicle.reset();
 };
 
 window.toggleCamera = function () {
@@ -791,39 +609,12 @@ window.showMultiplayer = function () {
 window.changeCarColor = function (color) {
     if (vehicle && vehicle.chassis && vehicle.chassis.material) {
         vehicle.chassis.material.diffuseColor = Color3.FromHexString(color);
-        console.log('🎨 تغيير اللون إلى:', color);
     }
 };
 
 window.upgrade = function (type) {
-    console.log('⬆️ ترقية:', type);
-    alert('✅ تمت الترقية!');
+    alert('✅ تمت الترقية: ' + type);
 };
-
-// استيراد المودات
-function setupModImport() {
-    const fileInput = document.getElementById('mod-file-input');
-    if (!fileInput) return;
-
-    fileInput.addEventListener('change', function (e) {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const status = document.getElementById('import-status');
-        if (status) status.innerText = '⏳ جاري التحميل...';
-
-        const url = URL.createObjectURL(file);
-
-        SceneLoader.ImportMeshAsync('', '', url, scene).then(function (result) {
-            if (status) status.innerText = '✅ تم الاستيراد بنجاح!';
-            console.log('📦 تم استيراد:', file.name);
-            setTimeout(closeImport, 1500);
-        }).catch(function (err) {
-            if (status) status.innerText = '❌ خطأ: ' + err.message;
-            console.error('❌ فشل الاستيراد:', err);
-        });
-    });
-}
 
 // ============================================================
 // التهيئة النهائية
@@ -831,11 +622,9 @@ function setupModImport() {
 function initControls() {
     setupControls();
     setupKeyboard();
-    setupModImport();
     console.log('🎮 نظام التحكم جاهز');
 }
 
-// استدعاء التهيئة بعد تحميل الصفحة
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initControls);
 } else {
@@ -845,30 +634,5 @@ if (document.readyState === 'loading') {
 // بدء اللعبة
 initGame().catch(function (err) {
     console.error('💥 خطأ فادح:', err);
-    showError('تعذر بدء اللعبة', err.message || String(err));
-});
-
-// لوحة المفاتيح
-window.addEventListener('keydown', function (e) {
-    if (e.key === 'w' || e.key === 'ArrowUp') inputState.gas = true;
-    if (e.key === 's' || e.key === 'ArrowDown') inputState.brake = true;
-    if (e.key === 'a' || e.key === 'ArrowLeft') inputState.left = true;
-    if (e.key === 'd' || e.key === 'ArrowRight') inputState.right = true;
-    if (e.key === ' ') inputState.handbrake = true;
-});
-
-window.addEventListener('keyup', function (e) {
-    if (e.key === 'w' || e.key === 'ArrowUp') inputState.gas = false;
-    if (e.key === 's' || e.key === 'ArrowDown') inputState.brake = false;
-    if (e.key === 'a' || e.key === 'ArrowLeft') inputState.left = false;
-    if (e.key === 'd' || e.key === 'ArrowRight') inputState.right = false;
-    if (e.key === ' ') inputState.handbrake = false;
-});
-
-// ============================================================
-// بدء التشغيل
-// ============================================================
-initGame().catch(function (err) {
-    console.error('💥 خطأ غير متوقع:', err);
     showError('تعذر بدء اللعبة', err.message || String(err));
 });
