@@ -51,6 +51,220 @@ class SimpleVehicle {
         this.position = chassisMesh.position.clone();
         this.rotation = new Vector3(0, 0, 0);
         this.velocity = new Vector3(0, 0, 0);
+
+        // ✅ خصائص مُحسّنة للسرعة
+        this.mass = 1000;
+        this.enginePower = 25000;      // ⬆️ زيادة كبيرة (كان 3000)
+        this.brakePower = 15000;       // ⬆️ فرامل أقوى
+        this.reversePower = 10000;     // قوة الرجوع للخلف
+        this.maxSpeed = 60;            // ⬆️ سرعة قصوى أعلى (60 m/s = 216 km/h)
+        this.maxReverseSpeed = 15;     // سرعة الرجوع
+        this.steerSpeed = 0.04;        // توجيه أسرع قليلاً
+        this.friction = 0.995;         // ⬆️ احتكاك أقل (كان 0.98)
+        this.airResistance = 0.0005;   // مقاومة هواء خفيفة
+        this.gravity = -9.81;
+
+        // العجلات المرئية
+        this.wheels = [];
+        this.wheelRadius = 0.4;
+        this.wheelBase = 3.0;
+        this.trackWidth = 2.2;
+
+        for (let i = 0; i < 4; i++) {
+            const wheel = MeshBuilder.CreateCylinder(
+                'wheel_' + i,
+                { diameter: this.wheelRadius * 2, height: 0.35, tessellation: 20 },
+                scene
+            );
+            wheel.rotation.z = Math.PI / 2;
+            wheel.material = new StandardMaterial('wheelMat_' + i, scene);
+            wheel.material.diffuseColor = new Color3(0.1, 0.1, 0.1);
+            this.wheels.push(wheel);
+        }
+
+        // حالة التحكم
+        this.throttle = 0;
+        this.brake = 0;
+        this.steer = 0;
+        this.handbrake = false;
+        this.speed = 0;
+        this.grounded = true;
+        this.engineRPM = 800;
+
+        console.log('🚗 تم إنشاء المركبة | قوة المحرك:', this.enginePower);
+    }
+
+    update(deltaTime) {
+        if (!this.chassis) return;
+
+        // ضمان deltaTime معقول
+        deltaTime = Math.min(deltaTime, 0.05);
+
+        // حساب الاتجاهات
+        const forward = new Vector3(
+            Math.sin(this.rotation.y),
+            0,
+            Math.cos(this.rotation.y)
+        );
+
+        // 1. قوة المحرك
+        let engineForce = 0;
+
+        if (this.throttle > 0) {
+            // تسارع أمامي
+            const speedFactor = 1 - (this.speed / this.maxSpeed) * 0.5;
+            engineForce = this.throttle * this.enginePower * speedFactor;
+            this.engineRPM = 800 + this.throttle * 6000 + this.speed * 50;
+        }
+
+        if (this.brake > 0) {
+            if (this.speed > 1) {
+                // فرملة
+                engineForce = -this.brake * this.brakePower;
+            } else {
+                // رجوع للخلف
+                engineForce = -this.brake * this.reversePower;
+            }
+            this.engineRPM = 800 + this.brake * 2000;
+        }
+
+        // فرامل يدوية
+        if (this.handbrake) {
+            this.velocity.scaleInPlace(0.92);
+            this.engineRPM = 800;
+        }
+
+        // 2. تطبيق القوة
+        if (Math.abs(engineForce) > 0) {
+            const acceleration = forward.scale(engineForce / this.mass);
+            this.velocity.addInPlace(acceleration.scale(deltaTime));
+        }
+
+        // 3. التوجيه (يعمل فقط عند الحركة)
+        if (Math.abs(this.steer) > 0.01 && Math.abs(this.speed) > 0.5) {
+            const speedFactor = Math.min(Math.abs(this.speed) / 15, 1);
+            const steerAmount = this.steer * this.steerSpeed * speedFactor;
+
+            // منع الدوران السريع جداً عند السرعات العالية
+            const highSpeedFactor = this.speed > 30 ? 0.5 : 1;
+            this.rotation.y += steerAmount * highSpeedFactor;
+        }
+
+        // 4. الاحتكاك ومقاومة الهواء
+        this.velocity.scaleInPlace(this.friction);
+
+        // مقاومة هواء تزيد مع السرعة
+        if (this.speed > 5) {
+            const dragForce = this.velocity.scale(-this.airResistance * this.speed);
+            this.velocity.addInPlace(dragForce.scale(deltaTime));
+        }
+
+        // 5. الجاذبية
+        this.velocity.y += this.gravity * deltaTime;
+
+        // 6. تحديث الموقع
+        this.position.addInPlace(this.velocity.scale(deltaTime));
+
+        // 7. منع السقوط تحت الأرض
+        if (this.position.y < 1) {
+            this.position.y = 1;
+            this.velocity.y = 0;
+            this.grounded = true;
+        } else {
+            this.grounded = false;
+        }
+
+        // 8. حساب السرعة
+        this.speed = Math.sqrt(
+            this.velocity.x * this.velocity.x +
+            this.velocity.z * this.velocity.z
+        );
+
+        // 9. تحديد السرعة القصوى
+        if (this.speed > this.maxSpeed) {
+            const scale = this.maxSpeed / this.speed;
+            this.velocity.x *= scale;
+            this.velocity.z *= scale;
+            this.speed = this.maxSpeed;
+        }
+
+        // 10. تحديث موقع الهيكل
+        this.chassis.position.copyFrom(this.position);
+        this.chassis.rotation.copyFrom(this.rotation);
+
+        // 11. تحديث العجلات
+        this.updateWheels();
+
+        // 12. تشخيص (كل ثانية تقريباً)
+        if (Math.random() < 0.02) {
+            console.log('🚗 السرعة:', (this.speed * 3.6).toFixed(0), 'km/h',
+                       '| القوة:', engineForce.toFixed(0),
+                       '| الوقود:', this.throttle);
+        }
+    }
+
+    updateWheels() {
+        const wheelPositions = [
+            new Vector3(-this.trackWidth / 2, -0.5, this.wheelBase / 2),
+            new Vector3(this.trackWidth / 2, -0.5, this.wheelBase / 2),
+            new Vector3(-this.trackWidth / 2, -0.5, -this.wheelBase / 2),
+            new Vector3(this.trackWidth / 2, -0.5, -this.wheelBase / 2)
+        ];
+
+        for (let i = 0; i < 4; i++) {
+            const offset = wheelPositions[i];
+
+            const rotatedOffset = new Vector3(
+                offset.x * Math.cos(this.rotation.y) + offset.z * Math.sin(this.rotation.y),
+                offset.y,
+                -offset.x * Math.sin(this.rotation.y) + offset.z * Math.cos(this.rotation.y)
+            );
+
+            this.wheels[i].position.copyFrom(this.position.add(rotatedOffset));
+            this.wheels[i].rotation.y = this.rotation.y;
+
+            // توجيه العجلات الأمامية
+            if (i < 2) {
+                this.wheels[i].rotation.y += this.steer * 0.5;
+            }
+
+            // تدوير العجلات حسب السرعة
+            this.wheels[i].rotation.x += this.speed * 0.15;
+        }
+    }
+
+    setThrottle(value) {
+        this.throttle = Math.max(0, Math.min(1, value));
+    }
+
+    setBrake(value) {
+        this.brake = Math.max(0, Math.min(1, value));
+    }
+
+    setSteer(value) {
+        this.steer = Math.max(-1, Math.min(1, value));
+    }
+
+    setHandbrake(active) {
+        this.handbrake = active;
+    }
+
+    reset() {
+        this.position = new Vector3(0, 2, 0);
+        this.rotation = new Vector3(0, 0, 0);
+        this.velocity = new Vector3(0, 0, 0);
+        this.speed = 0;
+        this.throttle = 0;
+        this.brake = 0;
+        this.steer = 0;
+        this.engineRPM = 800;
+        console.log('↺ إعادة تعيين السيارة');
+    }
+}
+        // الحالة الأساسية
+        this.position = chassisMesh.position.clone();
+        this.rotation = new Vector3(0, 0, 0);
+        this.velocity = new Vector3(0, 0, 0);
         this.angularVelocity = 0;
 
         // خصائص السيارة
