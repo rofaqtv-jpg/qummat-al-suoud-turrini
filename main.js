@@ -571,40 +571,282 @@ window.upgrade = function (type) {
     alert('✅ تمت الترقية: ' + type);
 };
 
+/// ============================================================
+// ربط أزرار التحكم - نظام موثوق 100%
 // ============================================================
-// ربط أزرار التحكم
-// ============================================================
-function bindButton(id, key) {
-    const btn = document.getElementById(id);
-    if (!btn) return;
 
-    btn.addEventListener('touchstart', function (e) {
-        e.preventDefault();
-        inputState[key] = true;
-    }, { passive: false });
+function setupControls() {
+    // دالة ربط موحدة تعمل مع اللمس والماوس
+    function bindControl(buttonId, inputKey) {
+        const btn = document.getElementById(buttonId);
+        if (!btn) {
+            console.warn('⚠️ زر غير موجود:', buttonId);
+            return;
+        }
 
-    btn.addEventListener('touchend', function (e) {
-        e.preventDefault();
-        inputState[key] = false;
-    }, { passive: false });
+        // إضافة فئة نشطة للتأثير البصري
+        function activate(e) {
+            if (e.cancelable) e.preventDefault();
+            e.stopPropagation();
+            inputState[inputKey] = true;
+            btn.classList.add('active');
+            console.log('🎮 تفعيل:', inputKey);
+        }
 
-    btn.addEventListener('mousedown', function () {
-        inputState[key] = true;
+        function deactivate(e) {
+            if (e.cancelable) e.preventDefault();
+            e.stopPropagation();
+            inputState[inputKey] = false;
+            btn.classList.remove('active');
+        }
+
+        // أحداث اللمس
+        btn.addEventListener('touchstart', activate, { passive: false });
+        btn.addEventListener('touchend', deactivate, { passive: false });
+        btn.addEventListener('touchcancel', deactivate, { passive: false });
+
+        // أحداث الماوس
+        btn.addEventListener('mousedown', activate);
+        btn.addEventListener('mouseup', deactivate);
+        btn.addEventListener('mouseleave', deactivate);
+
+        // أحداث المؤشر (للأجهزة اللوحية)
+        btn.addEventListener('pointerdown', activate);
+        btn.addEventListener('pointerup', deactivate);
+        btn.addEventListener('pointercancel', deactivate);
+    }
+
+    // ربط جميع الأزرار
+    bindControl('btn-gas', 'gas');
+    bindControl('btn-brake', 'brake');
+    bindControl('btn-left', 'left');
+    bindControl('btn-right', 'right');
+    bindControl('btn-handbrake', 'handbrake');
+
+    // أزرار الواجهة
+    const resetBtn = document.getElementById('btn-reset');
+    if (resetBtn) {
+        resetBtn.addEventListener('click', function () {
+            resetCar();
+        });
+    }
+
+    const cameraBtn = document.getElementById('btn-camera');
+    if (cameraBtn) {
+        cameraBtn.addEventListener('click', function () {
+            toggleCamera();
+        });
+    }
+
+    const exitBtn = document.getElementById('btn-exit');
+    if (exitBtn) {
+        exitBtn.addEventListener('click', function () {
+            showMainMenu();
+        });
+    }
+
+    console.log('✅ تم ربط جميع أزرار التحكم');
+}
+
+// لوحة المفاتيح
+function setupKeyboard() {
+    window.addEventListener('keydown', function (e) {
+        switch (e.key) {
+            case 'w':
+            case 'W':
+            case 'ArrowUp':
+                inputState.gas = true;
+                break;
+            case 's':
+            case 'S':
+            case 'ArrowDown':
+                inputState.brake = true;
+                break;
+            case 'a':
+            case 'A':
+            case 'ArrowLeft':
+                inputState.left = true;
+                break;
+            case 'd':
+            case 'D':
+            case 'ArrowRight':
+                inputState.right = true;
+                break;
+            case ' ':
+                inputState.handbrake = true;
+                break;
+        }
     });
 
-    btn.addEventListener('mouseup', function () {
-        inputState[key] = false;
+    window.addEventListener('keyup', function (e) {
+        switch (e.key) {
+            case 'w':
+            case 'W':
+            case 'ArrowUp':
+                inputState.gas = false;
+                break;
+            case 's':
+            case 'S':
+            case 'ArrowDown':
+                inputState.brake = false;
+                break;
+            case 'a':
+            case 'A':
+            case 'ArrowLeft':
+                inputState.left = false;
+                break;
+            case 'd':
+            case 'D':
+            case 'ArrowRight':
+                inputState.right = false;
+                break;
+            case ' ':
+                inputState.handbrake = false;
+                break;
+        }
     });
 
-    btn.addEventListener('mouseleave', function () {
-        inputState[key] = false;
+    console.log('✅ تم ربط لوحة المفاتيح');
+}
+
+// محاولة قفل الاتجاه الأفقي
+function lockLandscape() {
+    // محاولة قفل الاتجاه عبر Screen Orientation API
+    if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(function (err) {
+            console.log('⚠️ تعذر قفل الاتجاه:', err.message);
+        });
+    }
+
+    // محاولة عبر meta tag (لأجهزة iOS)
+    const meta = document.querySelector('meta[name="viewport"]');
+    if (meta) {
+        meta.setAttribute('content',
+            'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
+        );
+    }
+}
+
+// دوال الواجهة
+window.startGame = function () {
+    const menu = document.getElementById('main-menu');
+    const hud = document.getElementById('game-hud');
+    if (menu) menu.classList.add('hidden');
+    if (hud) hud.classList.remove('hidden');
+    gameActive = true;
+    lockLandscape();
+    if (vehicle) vehicle.reset();
+    console.log('🎮 بدء اللعبة');
+};
+
+window.showMainMenu = function () {
+    const menu = document.getElementById('main-menu');
+    const hud = document.getElementById('game-hud');
+    if (hud) hud.classList.add('hidden');
+    if (menu) menu.classList.remove('hidden');
+    gameActive = false;
+};
+
+window.resetCar = function () {
+    if (vehicle) {
+        vehicle.reset();
+        console.log('↺ إعادة السيارة');
+    }
+};
+
+window.toggleCamera = function () {
+    cameraMode = (cameraMode + 1) % 3;
+    const modes = ['خلفية', 'قمرة القيادة', 'علوية'];
+    console.log('📷 الكاميرا:', modes[cameraMode]);
+};
+
+window.showImport = function () {
+    const el = document.getElementById('import-panel');
+    if (el) el.classList.remove('hidden');
+};
+
+window.closeImport = function () {
+    const el = document.getElementById('import-panel');
+    if (el) el.classList.add('hidden');
+};
+
+window.showGarage = function () {
+    const el = document.getElementById('garage-panel');
+    if (el) el.classList.remove('hidden');
+};
+
+window.closeGarage = function () {
+    const el = document.getElementById('garage-panel');
+    if (el) el.classList.add('hidden');
+};
+
+window.toggleSettings = function () {
+    alert('⚙️ الإعدادات قيد التطوير');
+};
+
+window.showMultiplayer = function () {
+    alert('👥 اللعب الجماعي قيد التطوير');
+};
+
+window.changeCarColor = function (color) {
+    if (vehicle && vehicle.chassis && vehicle.chassis.material) {
+        vehicle.chassis.material.diffuseColor = Color3.FromHexString(color);
+        console.log('🎨 تغيير اللون إلى:', color);
+    }
+};
+
+window.upgrade = function (type) {
+    console.log('⬆️ ترقية:', type);
+    alert('✅ تمت الترقية!');
+};
+
+// استيراد المودات
+function setupModImport() {
+    const fileInput = document.getElementById('mod-file-input');
+    if (!fileInput) return;
+
+    fileInput.addEventListener('change', function (e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const status = document.getElementById('import-status');
+        if (status) status.innerText = '⏳ جاري التحميل...';
+
+        const url = URL.createObjectURL(file);
+
+        SceneLoader.ImportMeshAsync('', '', url, scene).then(function (result) {
+            if (status) status.innerText = '✅ تم الاستيراد بنجاح!';
+            console.log('📦 تم استيراد:', file.name);
+            setTimeout(closeImport, 1500);
+        }).catch(function (err) {
+            if (status) status.innerText = '❌ خطأ: ' + err.message;
+            console.error('❌ فشل الاستيراد:', err);
+        });
     });
 }
 
-bindButton('btn-gas', 'gas');
-bindButton('btn-brake', 'brake');
-bindButton('btn-left', 'left');
-bindButton('btn-right', 'right');
+// ============================================================
+// التهيئة النهائية
+// ============================================================
+function initControls() {
+    setupControls();
+    setupKeyboard();
+    setupModImport();
+    console.log('🎮 نظام التحكم جاهز');
+}
+
+// استدعاء التهيئة بعد تحميل الصفحة
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initControls);
+} else {
+    initControls();
+}
+
+// بدء اللعبة
+initGame().catch(function (err) {
+    console.error('💥 خطأ فادح:', err);
+    showError('تعذر بدء اللعبة', err.message || String(err));
+});
 
 // لوحة المفاتيح
 window.addEventListener('keydown', function (e) {
