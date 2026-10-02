@@ -849,4 +849,40 @@ if (document.readyState === 'loading') {
 initGame().catch(function (err) {
     console.error('💥 خطأ فادح:', err);
     showError('تعذر بدء اللعبة', err.message || String(err));
+
+    window.setVehicleType = function(type) {
+    if (!vehicle) return;
+
+    switch(type) {
+        case 'sport':
+            vehicle.enginePower = 40000;
+            vehicle.maxSpeed = 90;
+            vehicle.mass = 800;
+            vehicle.steerSpeed = 0.05;
+            console.log('🏎️ سيارة رياضية');
+            break;
+
+        case 'truck':
+            vehicle.enginePower = 20000;
+            vehicle.maxSpeed = 40;
+            vehicle.mass = 2500;
+            vehicle.steerSpeed = 0.025;
+            console.log('🚛 شاحنة');
+            break;
+
+        case 'jeep':
+            vehicle.enginePower = 25000;
+            vehicle.maxSpeed = 55;
+            vehicle.mass = 1200;
+            vehicle.steerSpeed = 0.04;
+            console.log('🚙 جيب');
+            break;
+
+        default:
+            vehicle.enginePower = 25000;
+            vehicle.maxSpeed = 60;
+            vehicle.mass = 1000;
+            vehicle.steerSpeed = 0.04;
+    }
+};
 });
