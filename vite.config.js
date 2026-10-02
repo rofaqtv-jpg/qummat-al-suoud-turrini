@@ -6,13 +6,7 @@ export default defineConfig({
     outDir: 'dist',
     assetsDir: 'assets',
     emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          babylon: ['@babylonjs/core', '@babylonjs/loaders', '@babylonjs/gui']
-        }
-      }
-    },
-    chunkSizeWarningLimit: 5000
-  }
+    chunkSizeWarningLimit: 10000
+  },
+  assetsInclude: ['**/*.wasm']
 });
